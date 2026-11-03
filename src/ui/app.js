@@ -78,7 +78,24 @@
     },
   };
   const $ = (id) => document.getElementById(id);
-  const desktop = Boolean(window.atlasDesktop);
+  const desktop = window.location.pathname === '/desktop';
+  if (desktop) {
+    window.atlasDesktop = {
+      status: async () => {
+        const response = await fetch('/api/v1/status', { cache: 'no-store' });
+        return response.json();
+      },
+      addAccount: async (input) => {
+        const response = await fetch('/api/v1/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+          cache: 'no-store',
+        });
+        return response.json();
+      },
+    };
+  }
   let language = navigator.language.toLowerCase().startsWith('de') ? 'de' : 'en';
   let token = '';
   let connected = desktop;

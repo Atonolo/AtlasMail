@@ -2,8 +2,5 @@ node_modules/
 dist/
 coverage/
 reports/
-.playwright-mcp/
-__pycache__/
-*.py[cod]
 *.log
 .DS_Store
