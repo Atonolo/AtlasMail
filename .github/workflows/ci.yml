@@ -1,0 +1,126 @@
+name: Foundation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, macos-15-intel, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26.13.0
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Install the pinned Electron runtime
+        run: node -e "require('electron')"
+      - name: Permit the Linux test executable to create its sandbox
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          restriction=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ -r "$restriction" && "$(cat "$restriction")" == 1 ]]; then
+            executable="$(realpath node_modules/electron/dist/electron)"
+            if [[ "$executable" == *'"'* || "$executable" == *\\* || "$executable" == *$'\n'* ]]; then
+              echo "Electron path cannot be safely represented in an AppArmor profile." >&2
+              exit 1
+            fi
+            printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile atlas-mail-ci "%s" flags=(unconfined) {\n  userns,\n}\n' "$executable" \
+              | sudo tee /etc/apparmor.d/atlas-mail-ci >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/atlas-mail-ci
+          fi
+      - run: npm test
+      - name: Desktop smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run smoke:desktop
+      - name: Browser smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run smoke:web
+      - name: Disabled-sandbox rejection (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run smoke:sandbox
+      - name: Desktop smoke test
+        if: runner.os != 'Linux'
+        run: npm run smoke:desktop
+      - name: Browser smoke test
+        if: runner.os != 'Linux'
+        run: npm run smoke:web
+      - name: Disabled-sandbox rejection
+        if: runner.os != 'Linux'
+        run: npm run smoke:sandbox
+      - name: Prepare pinned Firefox ESR (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/firefox-esr.tar.xz" \
+            "https://download-installer.cdn.mozilla.net/pub/firefox/releases/153.6.0esr/linux-x86_64/en-US/firefox-153.6.0esr.tar.xz"
+          echo "31321cd9e2cef73df678417e810cdd1b5760aa5cc8063c8465669e5869cb8498  $RUNNER_TEMP/firefox-esr.tar.xz" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/firefox-esr.tar.xz" -C "$RUNNER_TEMP"
+          echo "FIREFOX_BINARY=$RUNNER_TEMP/firefox/firefox" >> "$GITHUB_ENV"
+      - name: Firefox browser smoke test
+        run: npm run smoke:web:firefox
+      - name: Native credential smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: npm run smoke:credentials
+      - name: Native credential smoke tests (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends dbus-x11 gnome-keyring libsecret-tools
+          export XDG_DATA_HOME="$RUNNER_TEMP/atlas-keyring/data"
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/atlas-keyring/config"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/atlas-keyring/runtime"
+          export XDG_CURRENT_DESKTOP=GNOME
+          mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "atlas-synthetic-keyring-passphrase\n" | gnome-keyring-daemon --unlock
+            printf "atlas-synthetic-secret" | secret-tool store --label="Atlas test setup" app atlas-mail probe init
+            secret-tool clear app atlas-mail probe init
+            xvfb-run -a npm run smoke:credentials
+          '
+          ATLAS_MAIL_EXPECT_BASIC_TEXT=1 xvfb-run -a npm run smoke:credentials
+      - name: Package baseline application
+        run: npm run package -- --publish never
+      - name: Blocking license check
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force reports | Out-Null
+          npm run license:check --silent > reports/licenses.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Generate npm SBOM
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force reports | Out-Null
+          npm run sbom --silent > reports/sbom.cdx.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve build and dependency evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atlas-mail-${{ matrix.os }}
+          if-no-files-found: warn
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.deb
+            reports/
+            package-lock.json
+            node_modules/electron/dist/LICENSE*

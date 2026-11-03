@@ -1,0 +1,73 @@
+{
+  "name": "atlas-mail",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first Atlas Mail foundation",
+  "license": "MPL-2.0",
+  "author": "Atlas Mail contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Atonolo/AtlasMail.git"
+  },
+  "desktopName": "atlas-mail.desktop",
+  "main": "src/desktop/main.cjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "server": "node src/server/index.cjs",
+    "test": "node --test",
+    "smoke:desktop": "node scripts/run-smoke.cjs desktop",
+    "smoke:web": "node scripts/run-smoke.cjs web",
+    "smoke:sandbox": "node scripts/smoke-sandbox.cjs",
+    "smoke:web:firefox": "node scripts/smoke-firefox.cjs",
+    "smoke:credentials": "node scripts/run-smoke.cjs credentials",
+    "build": "electron-builder --dir",
+    "package": "electron-builder",
+    "license:check": "node scripts/check-licenses.cjs",
+    "sbom": "npm sbom --sbom-format=cyclonedx --sbom-type=application"
+  },
+  "devDependencies": {
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0"
+  },
+  "overrides": {
+    "truncate-utf8-bytes": "npm:unicode-byte-truncate@1.0.0"
+  },
+  "build": {
+    "appId": "org.atlasoffice.mail",
+    "productName": "Atlas Mail",
+    "publish": [],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "LICENSE",
+      "README.md",
+      "THIRD_PARTY_NOTICES.md",
+      "docs/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "category": "Office",
+      "maintainer": "Atlas Mail contributors <noreply@github.com>",
+      "syncDesktopName": true,
+      "target": [
+        "deb"
+      ]
+    }
+  }
+}
