@@ -57,12 +57,14 @@ function createWindow() {
 }
 
 if (app.commandLine.hasSwitch('no-sandbox')) {
-  console.error('Atlas Mail refused to start because its sandbox is disabled.');
-  dialog.showErrorBox(
-    'Atlas Mail',
-    'Der Start ohne Sandbox ist nicht zulässig. / Starting without the sandbox is not allowed.',
-  );
-  app.exit(1);
+  app.whenReady().then(() => {
+    console.error('Atlas Mail refused to start because its sandbox is disabled.');
+    dialog.showErrorBox(
+      'Atlas Mail',
+      'Der Start ohne Sandbox ist nicht zulässig. / Starting without the sandbox is not allowed.',
+    );
+    app.exit(1);
+  });
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

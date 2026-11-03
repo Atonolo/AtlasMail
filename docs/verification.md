@@ -123,10 +123,22 @@ account and displayed it again after restarting. Uninstallation and data
 retention have **not** been established for this artifact. A separate
 `--no-sandbox` launch exited with status 1 and reported the error to stderr.
 Electron documents that `showErrorBox` called before readiness on Linux does
-not show a GUI dialog, so this error is not yet visibly explained to someone
-launching it from the desktop. Its bundled documentation predates the latest
-local documentation updates. The VM was shut down with this package still
-installed.
+not show a GUI dialog. The source now waits for Electron readiness before
+showing the sandbox rejection; the regression smoke checks that ordering, but
+a visible dialog has not been confirmed in the VM. The installed package still
+predates this source change and the latest local documentation updates. The VM
+was shut down with this package still installed.
+
+After that source change, the complete Node/Python suite and Linux desktop,
+web and disabled-sandbox smokes passed on the current Linux host with Node
+26.12.1 and Electron 45.2.1. Desktop and web smokes ran as an unprivileged
+user under Xvfb; the initial root-run attempts correctly failed because
+Chromium refuses to start as root without disabling its sandbox. A separate
+unprivileged `--no-sandbox` launch under Xvfb produced an open X11 error
+dialog, confirming that the guard now reaches a GUI dialog after readiness.
+The dialog text was not independently inspected, and this host-level check
+does not replace testing the rebuilt DEB in the Ubuntu VM, including
+uninstallation and byte-for-byte data retention.
 
 The Windows Electron `LICENSES.chromium.html` SHA-256 was
 `7dac8267ac6da8d959cfe88f5f055b18a397f10230380b5329125e167bf5639b`;
