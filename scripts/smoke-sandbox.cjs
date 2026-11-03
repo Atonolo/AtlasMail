@@ -16,7 +16,7 @@ try {
   if (result.error) throw result.error;
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /refused to start because its sandbox is disabled/);
-  assert.match(result.stdout, /Sandbox rejection was explained/);
+  assert.match(result.stdout, /Sandbox rejection was explained after application readiness/);
   assert.equal(fs.existsSync(path.join(directory, 'data')), false);
   console.log('Disabled sandbox was rejected before opening the application or writing data.');
 } finally {
