@@ -109,7 +109,8 @@ func TestServiceSurvivesProcessRestart(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
 		t.Fatal(err)
 	}
-	if len(status.Data.Accounts) != 1 || status.Data.Accounts[0] != created.Data {
+	if len(status.Data.Accounts) != 1 || status.Data.Accounts[0].Account != created.Data ||
+		status.Data.Accounts[0].Configured {
 		t.Fatalf("stable account identity lost on process restart: %#v", status)
 	}
 	if _, err := os.Stat(filepath.Join(directory, "state-v1.json.lock")); !os.IsNotExist(err) {

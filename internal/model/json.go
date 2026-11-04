@@ -32,6 +32,23 @@ func decodeExact(data []byte, target any) error {
 	return json.Unmarshal(data, target)
 }
 
+func ValidateJSON(data []byte) error {
+	if !utf8.Valid(data) {
+		return errors.New("invalid UTF-8")
+	}
+	if err := checkEscapedUnicode(data); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := checkKeys(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("trailing JSON")
+	}
+	return nil
+}
+
 // encoding/json otherwise replaces unpaired UTF-16 escapes with U+FFFD.
 func checkEscapedUnicode(data []byte) error {
 	for index := 0; index < len(data); index++ {

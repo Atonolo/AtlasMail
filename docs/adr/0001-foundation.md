@@ -1,6 +1,7 @@
 # ADR 0001: Go executable with a shared local web UI
 
-**Status:** accepted for the P0 redevelopment; target operating-system and
+**Status:** accepted for the P0 foundation; mail integration is extended by
+[ADR 0002](0002-personal-mail-accounts.md). Target operating-system and
 accessibility acceptance remains subject to native testing.
 **Context:** [Atonolo/OpenSourceIdeas#5](https://github.com/Atonolo/OpenSourceIdeas/issues/5)
 and [Atonolo/OpenSourceIdeas#1](https://github.com/Atonolo/OpenSourceIdeas/issues/1).
@@ -75,9 +76,10 @@ Self-hosted executable -- authenticated loopback HTTP -- same components
 
 The configuration model contains no secret material. The native credential
 adapter uses Windows Credential Manager, macOS Keychain or Linux Secret
-Service through the keyring library. The P0 UI deliberately does not collect
-or send credentials. IMAP, SMTP, JMAP, CalDAV, CardDAV, message HTML rendering,
-sync and durable queue execution remain future features.
+Service through the keyring library. The original P0 implementation did not
+collect or send credentials; personal IMAP/SMTP and JMAP account flows are
+now implemented as described in ADR 0002. CalDAV, CardDAV, background sync
+and durable queue execution remain future features.
 
 ## Platform contract and evidence
 

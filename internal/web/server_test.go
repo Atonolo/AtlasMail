@@ -9,8 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/Atonolo/AtlasMail/internal/credentials"
+	"github.com/Atonolo/AtlasMail/internal/mail"
+	"github.com/Atonolo/AtlasMail/internal/model"
 	"github.com/Atonolo/AtlasMail/internal/service"
 	"github.com/Atonolo/AtlasMail/internal/store"
 )
@@ -150,6 +154,133 @@ func TestWebRejectsCrossOriginAndMalformedAccountRequests(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "INVALID_JSON") {
 		t.Fatalf("unexpected-field request returned %d: %s", response.Code, response.Body.String())
+	}
+}
+
+type testCredentialBackend struct {
+	mu     sync.Mutex
+	values map[string]string
+}
+
+func (b *testCredentialBackend) Set(_, user, value string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.values == nil {
+		b.values = make(map[string]string)
+	}
+	b.values[user] = value
+	return nil
+}
+
+func (b *testCredentialBackend) Get(_, user string) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.values[user], nil
+}
+
+func (b *testCredentialBackend) Delete(_, user string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.values, user)
+	return nil
+}
+
+func TestAccountSetupStoresCredentialsAndRemovalRevokesThem(t *testing.T) {
+	directory := t.TempDir()
+	keyring := &testCredentialBackend{values: make(map[string]string)}
+	mailService := service.NewWithCredentials(store.New(directory), credentials.NewWithBackend(keyring))
+	handler := testHandler(t, Config{
+		Service: mailService, Assets: os.DirFS("../../src/ui"), Token: testToken,
+	})
+	input := `{"account":{"label":"Personal","address":"person@example.org","protocol":"imap-smtp"},"profile":{"username":"person@example.org","authMechanism":"password","imap":{"host":"imap.example.org","port":993,"tlsMode":"implicit"},"smtp":{"host":"smtp.example.org","port":465,"tlsMode":"implicit"},"jmapUrl":"","oauth":null},"secret":"test-password-never-export"}`
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:3123/api/v1/accounts/setup", strings.NewReader(input))
+	request.Host = "127.0.0.1:3123"
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("account setup returned %d: %s", response.Code, response.Body.String())
+	}
+	var created struct {
+		Data model.Account `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(response.Body.String(), "test-password-never-export") {
+		t.Fatal("account setup response exposed credential")
+	}
+	keyring.mu.Lock()
+	if keyring.values[created.Data.ID] != "test-password-never-export" {
+		keyring.mu.Unlock()
+		t.Fatal("account setup did not save credential")
+	}
+	keyring.mu.Unlock()
+	connections, err := store.New(directory).ReadConnections()
+	if err != nil || strings.Contains(string(connections), "test-password-never-export") {
+		t.Fatalf("credential appeared in connection settings: %q %v", connections, err)
+	}
+	backup, err := store.New(directory).ExportBackup()
+	if err != nil || strings.Contains(string(backup), "test-password-never-export") {
+		t.Fatalf("credential appeared in backup: %q %v", backup, err)
+	}
+
+	request = httptest.NewRequest(http.MethodDelete, "http://127.0.0.1:3123/api/v1/accounts/"+created.Data.ID, nil)
+	request.Host = "127.0.0.1:3123"
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("account removal returned %d: %s", response.Code, response.Body.String())
+	}
+	keyring.mu.Lock()
+	remaining := keyring.values[created.Data.ID]
+	keyring.mu.Unlock()
+	if remaining != "" {
+		t.Fatal("account removal left credentials behind")
+	}
+}
+
+func TestOAuthStartUsesAuthorizedOriginAndCallbackDoesNotNeedBearer(t *testing.T) {
+	mailService := service.NewWithCredentials(store.New(t.TempDir()), credentials.NewWithBackend(&testCredentialBackend{}))
+	_, err := mailService.ConfigureAccount(model.AccountInput{
+		Label: "OAuth", Address: "person@example.org", Protocol: "jmap",
+	}, mail.Profile{
+		Username: "person@example.org", AuthMechanism: "oauth2", JMAPURL: "https://mail.example.org/session",
+		OAuth: &mail.OAuthSettings{
+			AuthorizationURL: "https://provider.example/oauth/authorize",
+			TokenURL:         "https://provider.example/oauth/token", ClientID: "public-client", Scope: "mail",
+		},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := testHandler(t, Config{
+		Service: mailService, Assets: os.DirFS("../../src/ui"), Token: testToken,
+		Desktop: true,
+	})
+	status, err := mailService.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := status.Accounts[0].ID
+	request := httptest.NewRequest(http.MethodGet,
+		"http://127.0.0.1:3123/api/v1/oauth/start?accountId="+accountID, nil)
+	request.Host = "127.0.0.1:3123"
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "code_challenge_method") {
+		t.Fatalf("OAuth start failed: %d %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet,
+		"http://127.0.0.1:3123/oauth/callback?state=invalid-state-000000000000000000000000&code=sample", nil)
+	request.Host = "127.0.0.1:3123"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "oauth-callback.js") {
+		t.Fatalf("OAuth callback was not safely rejected: %d %s", response.Code, response.Body.String())
 	}
 }
 
