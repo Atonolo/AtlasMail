@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -102,5 +103,55 @@ func TestLinuxDataDirectoryUsesXDGDataHome(t *testing.T) {
 	}
 	if directory != filepath.Join("/tmp/atlas-mail-test-data", "AtlasMail") {
 		t.Fatalf("unexpected data directory: %s", directory)
+	}
+}
+
+func TestFailedReplacementPreservesStateAndRemovesTemporaryFiles(t *testing.T) {
+	stateStore := New(t.TempDir())
+	input := model.AccountInput{Label: "Keep", Address: "keep@example.invalid", Protocol: "jmap"}
+	if _, err := stateStore.AddAccount(input); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(stateStore.directory, dataFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateStore.replace = func(_, _ string) error { return os.ErrPermission }
+	if _, err := stateStore.AddAccount(input); err == nil {
+		t.Fatal("injected replacement failure must be surfaced")
+	} else {
+		var storeErr *Error
+		if !errors.As(err, &storeErr) || storeErr.Code != "WRITE_FAILED" {
+			t.Fatalf("unexpected failure: %v", err)
+		}
+	}
+	after, err := os.ReadFile(filepath.Join(stateStore.directory, dataFilename))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("valid bytes changed after failed write: %v", err)
+	}
+	files, err := os.ReadDir(stateStore.directory)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("temporary files or lock remain: %v, %v", files, err)
+	}
+	if _, err := New(stateStore.directory).Read(); err != nil {
+		t.Fatalf("cannot reopen last valid state: %v", err)
+	}
+}
+
+func TestUnsupportedStoredSchemaIsNotOverwritten(t *testing.T) {
+	directory := t.TempDir()
+	data := []byte(`{"schemaVersion":99,"futureData":"retain"}`)
+	filename := filepath.Join(directory, dataFilename)
+	if err := os.WriteFile(filename, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := New(directory).AddAccount(model.AccountInput{Label: "Test", Address: "test@example.invalid", Protocol: "jmap"})
+	var storeErr *Error
+	if !errors.As(err, &storeErr) || storeErr.Code != "UNSUPPORTED_SCHEMA" {
+		t.Fatalf("unexpected schema error: %v", err)
+	}
+	after, err := os.ReadFile(filename)
+	if err != nil || !bytes.Equal(data, after) {
+		t.Fatalf("future schema was overwritten: %v", err)
 	}
 }

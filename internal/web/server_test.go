@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -72,9 +74,11 @@ func TestDesktopModeAllowsOnlyItsLoopbackOrigin(t *testing.T) {
 		Service: service.New(store.New(t.TempDir())),
 		Assets:  os.DirFS("../../src/ui"),
 		Desktop: true,
+		Token:   testToken,
 	})
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:3123/api/v1/status", nil)
 	request.Host = "127.0.0.1:3123"
+	request.Header.Set("Authorization", "Bearer "+testToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -107,6 +111,7 @@ func TestEmbeddedUIIsServedWithSecurityHeaders(t *testing.T) {
 		Service: service.New(store.New(t.TempDir())),
 		Assets:  os.DirFS("../../src/ui"),
 		Desktop: true,
+		Token:   testToken,
 	})
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:3123/desktop", nil)
 	request.Host = "127.0.0.1:3123"
@@ -154,5 +159,70 @@ func testHandler(t *testing.T, config Config) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return handler
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Context().Value(http.LocalAddrContextKey) == nil {
+			r = r.WithContext(context.WithValue(r.Context(), http.LocalAddrContextKey,
+				&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 3123}))
+		}
+		handler.ServeHTTP(w, r)
+	})
+}
+
+func TestLocalSessionRequiresTokenAndSurvivesPageReload(t *testing.T) {
+	handler := testHandler(t, Config{
+		Service: service.New(store.New(t.TempDir())), Assets: os.DirFS("../../src/ui"),
+		Desktop: true, Token: testToken,
+	})
+	send := func(path, method, token string, cookie *http.Cookie, localHeader bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, "http://127.0.0.1:3123"+path, nil)
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+		if localHeader {
+			request.Header.Set("X-Atlas-Local", "1")
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+	for _, path := range []string{"/api/v1/session", "/api/v1/accounts"} {
+		if response := send(path, http.MethodPost, "", nil, false); response.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated %s returned %d", path, response.Code)
+		}
+	}
+	if response := send("/api/v1/status", http.MethodGet, "", nil, false); response.Code != http.StatusUnauthorized {
+		t.Fatal("local status must not bypass authentication")
+	}
+	bootstrap := send("/api/v1/session", http.MethodPost, testToken, nil, false)
+	if bootstrap.Code != http.StatusOK {
+		t.Fatalf("bootstrap failed: %s", bootstrap.Body.String())
+	}
+	cookies := bootstrap.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode ||
+		cookies[0].MaxAge != 0 || !cookies[0].Expires.IsZero() {
+		t.Fatalf("expected a restricted session cookie: %#v", cookies)
+	}
+	if response := send("/api/v1/status", http.MethodGet, "", cookies[0], true); response.Code != http.StatusOK {
+		t.Fatalf("reload with session cookie failed: %s", response.Body.String())
+	}
+	if response := send("/api/v1/status", http.MethodGet, "", cookies[0], false); response.Code != http.StatusUnauthorized {
+		t.Fatal("cookie without custom local header must be rejected")
+	}
+}
+
+func TestHostMustMatchListeningPort(t *testing.T) {
+	handler := testHandler(t, Config{
+		Service: service.New(store.New(t.TempDir())), Assets: os.DirFS("../../src/ui"), Token: testToken,
+	})
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:9000/api/v1/status", nil)
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("wrong port was accepted: %d", response.Code)
+	}
 }

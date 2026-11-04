@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -15,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Atonolo/AtlasMail/internal/credentials"
+	"github.com/Atonolo/AtlasMail/internal/model"
 	"github.com/Atonolo/AtlasMail/internal/service"
 	"github.com/Atonolo/AtlasMail/internal/store"
 	"github.com/Atonolo/AtlasMail/internal/web"
@@ -31,13 +35,16 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) == 1 && args[0] == "credentials-smoke" {
+		return credentialSmoke()
+	}
 	mode := "desktop"
 	if len(args) > 1 {
-		return errors.New("usage: atlas-mail [server]")
+		return errors.New("usage: atlas-mail [server|credentials-smoke]")
 	}
 	if len(args) == 1 {
 		if args[0] != "server" {
-			return errors.New("usage: atlas-mail [server]")
+			return errors.New("usage: atlas-mail [server|credentials-smoke]")
 		}
 		mode = "server"
 	}
@@ -54,6 +61,39 @@ func run(args []string) error {
 		return runServer(mailService, assets)
 	}
 	return runDesktop(mailService, assets)
+}
+
+func credentialSmoke() (result error) {
+	id, err := model.NewIdentifier()
+	if err != nil {
+		return err
+	}
+	store := credentials.New()
+	const secret = "atlas-mail-synthetic-keyring-smoke"
+	if err := store.Put(id, secret); err != nil {
+		return err
+	}
+	defer func() {
+		if result != nil {
+			result = errors.Join(result, store.Delete(id))
+		}
+	}()
+	value, err := store.Get(id)
+	if err != nil {
+		return err
+	}
+	if value != secret {
+		return errors.New("CREDENTIAL_ROUNDTRIP_FAILED")
+	}
+	if err := store.Delete(id); err != nil {
+		return err
+	}
+	value, err = store.Get(id)
+	if err != nil || value != "" {
+		return errors.Join(errors.New("CREDENTIAL_DELETE_VERIFICATION_FAILED"), err)
+	}
+	fmt.Println("Native credential-store write/read/delete smoke passed (synthetic data).")
+	return nil
 }
 
 func runServer(mailService *service.MailService, assets fs.FS) error {
@@ -79,9 +119,15 @@ func runServer(mailService *service.MailService, assets fs.FS) error {
 }
 
 func runDesktop(mailService *service.MailService, assets fs.FS) error {
+	token := make([]byte, 32)
+	if _, err := rand.Read(token); err != nil {
+		return fmt.Errorf("generate local session token: %w", err)
+	}
+	accessToken := base64.RawURLEncoding.EncodeToString(token)
 	handler, err := web.NewHandler(web.Config{
 		Service: mailService,
 		Assets:  assets,
+		Token:   accessToken,
 		Desktop: true,
 	})
 	if err != nil {
@@ -91,7 +137,7 @@ func runDesktop(mailService *service.MailService, assets fs.FS) error {
 	if err != nil {
 		return fmt.Errorf("start local application service: %w", err)
 	}
-	url := "http://" + listener.Addr().String() + "/desktop"
+	url := "http://" + listener.Addr().String() + "/desktop#session=" + accessToken
 	if err := openBrowser(url); err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("open system browser: %w", err)

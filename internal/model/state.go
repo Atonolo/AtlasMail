@@ -1,15 +1,15 @@
 package model
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 const SchemaVersion = 1
@@ -156,17 +156,17 @@ func ValidIdentifier(value string) bool { return identifierPattern.MatchString(v
 
 func DecodeState(data []byte) (State, error) {
 	var state State
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&state); err != nil {
+	var version struct {
+		SchemaVersion int `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(data, &version); err != nil {
 		return State{}, &Error{Code: "INVALID_STORED_DATA"}
 	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return State{}, &Error{Code: "INVALID_STORED_DATA"}
-	}
-	if state.SchemaVersion != SchemaVersion {
+	if version.SchemaVersion != SchemaVersion {
 		return State{}, &Error{Code: "UNSUPPORTED_SCHEMA"}
+	}
+	if err := decodeExact(data, &state); err != nil {
+		return State{}, &Error{Code: "INVALID_STORED_DATA"}
 	}
 	if err := ValidateState(state); err != nil {
 		return State{}, err
@@ -211,10 +211,6 @@ func ValidateState(state State) error {
 		}
 		return nil
 	}
-	registerEntity := func(id string) error {
-		return register(id)
-	}
-
 	for _, account := range state.Accounts {
 		if err := ValidateAccount(account); err != nil {
 			return err
@@ -231,7 +227,7 @@ func ValidateState(state State) error {
 		if !validText(item.RemoteID, 1024, true) || !validText(item.FolderID, 1024, true) {
 			return &Error{Code: "INVALID_DATA"}
 		}
-		if err := registerEntity(item.ID); err != nil {
+		if err := register(item.ID); err != nil {
 			return err
 		}
 	}
@@ -252,7 +248,7 @@ func ValidateState(state State) error {
 		if !exists || !validText(item.RemoteID, 1024, true) {
 			return &Error{Code: "INVALID_REFERENCE"}
 		}
-		if err := registerEntity(item.ID); err != nil {
+		if err := register(item.ID); err != nil {
 			return err
 		}
 	}
@@ -263,7 +259,7 @@ func ValidateState(state State) error {
 		if !validText(item.RemoteID, 1024, true) {
 			return &Error{Code: "INVALID_DATA"}
 		}
-		if err := registerEntity(item.ID); err != nil {
+		if err := register(item.ID); err != nil {
 			return err
 		}
 	}
@@ -274,7 +270,7 @@ func ValidateState(state State) error {
 		if !validText(item.RemoteID, 1024, true) {
 			return &Error{Code: "INVALID_DATA"}
 		}
-		if err := registerEntity(item.ID); err != nil {
+		if err := register(item.ID); err != nil {
 			return err
 		}
 	}
@@ -336,7 +332,14 @@ func validateReference(id, accountID, entityID, kind string) error {
 }
 
 func validText(value string, maxLength int, allowEmpty bool) bool {
-	if len([]rune(value)) > maxLength || (!allowEmpty && (value == "" || strings.TrimSpace(value) != value)) {
+	if !utf8.ValidString(value) {
+		return false
+	}
+	length := 0
+	for _, char := range value {
+		length += utf16.RuneLen(char)
+	}
+	if length > maxLength || (!allowEmpty && (value == "" || strings.TrimSpace(value) != value)) {
 		return false
 	}
 	return true
@@ -344,16 +347,15 @@ func validText(value string, maxLength int, allowEmpty bool) bool {
 
 func ValidateReferences(state State) error {
 	entities := make(map[string]entity)
+	calendars := make(map[string]string, len(state.Calendars))
+	for _, calendar := range state.Calendars {
+		calendars[calendar.ID] = calendar.AccountID
+	}
 	for _, item := range state.Messages {
 		entities[item.ID] = entity{"message", item.AccountID}
 	}
 	for _, item := range state.Events {
-		for _, calendar := range state.Calendars {
-			if calendar.ID == item.CalendarID {
-				entities[item.ID] = entity{"event", calendar.AccountID}
-				break
-			}
-		}
+		entities[item.ID] = entity{"event", calendars[item.CalendarID]}
 	}
 	for _, item := range state.Contacts {
 		entities[item.ID] = entity{"contact", item.AccountID}

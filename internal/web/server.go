@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -36,8 +37,11 @@ func NewHandler(config Config) (http.Handler, error) {
 	if config.Service == nil || config.Assets == nil {
 		return nil, errors.New("service and embedded UI assets are required")
 	}
-	if !config.Desktop && !validToken(config.Token) {
-		return nil, errors.New("ATLAS_MAIL_WEB_TOKEN must be a random base64url token of 43-128 characters")
+	if !validToken(config.Token) {
+		return nil, errors.New("a random base64url access token of 43-128 characters is required")
+	}
+	if config.Desktop && config.PublicOrigin != "" {
+		return nil, errors.New("local application sessions cannot have a public origin")
 	}
 	if config.PublicOrigin != "" {
 		parsed, err := url.Parse(config.PublicOrigin)
@@ -92,7 +96,26 @@ func handle(w http.ResponseWriter, r *http.Request, config Config) {
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "code": "NOT_FOUND"})
 		return
 	}
-	if !config.Desktop && !authenticate(r.Header.Get("Authorization"), config.Token) {
+	bearerAuthenticated := authenticate(r.Header.Get("Authorization"), config.Token)
+	if config.Desktop && r.Method == http.MethodPost && r.URL.Path == "/api/v1/session" {
+		if !bearerAuthenticated {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "code": "AUTH_REQUIRED"})
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name: sessionCookieName(r), Value: config.Token, Path: "/api/v1/",
+			HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": nil})
+		return
+	}
+	sessionAuthenticated := false
+	if config.Desktop && r.Header.Get("X-Atlas-Local") == "1" {
+		if cookie, err := r.Cookie(sessionCookieName(r)); err == nil {
+			sessionAuthenticated = authenticate("Bearer "+cookie.Value, config.Token)
+		}
+	}
+	if !bearerAuthenticated && !sessionAuthenticated {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "code": "AUTH_REQUIRED"})
 		return
 	}
@@ -141,7 +164,20 @@ func requestOrigin(r *http.Request, publicOrigin string) (string, bool) {
 	if host != "127.0.0.1" && host != "localhost" {
 		return "", false
 	}
+	localAddress, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return "", false
+	}
+	_, localPort, err := net.SplitHostPort(localAddress.String())
+	if err != nil || localPort != port {
+		return "", false
+	}
 	return "http://" + net.JoinHostPort(host, port), true
+}
+
+func sessionCookieName(r *http.Request) string {
+	_, port, _ := net.SplitHostPort(r.Host)
+	return "atlas_mail_session_" + port
 }
 
 func staticAsset(path string, desktop bool) (string, string, bool) {
@@ -185,19 +221,16 @@ func readAccount(r *http.Request) (model.AccountInput, error) {
 		(len(parameters) > 0 && (len(parameters) != 1 || !strings.EqualFold(parameters["charset"], "utf-8"))) {
 		return model.AccountInput{}, &requestError{http.StatusBadRequest, "INVALID_CONTENT_TYPE"}
 	}
-	reader := http.MaxBytesReader(nil, r.Body, maxRequestBytes)
-	decoder := json.NewDecoder(reader)
-	decoder.DisallowUnknownFields()
-	var input model.AccountInput
-	if err := decoder.Decode(&input); err != nil {
+	data, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxRequestBytes))
+	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			return model.AccountInput{}, &requestError{http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE"}
 		}
 		return model.AccountInput{}, &requestError{http.StatusBadRequest, "INVALID_JSON"}
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
+	input, err := model.DecodeAccountInput(data)
+	if err != nil {
 		return model.AccountInput{}, &requestError{http.StatusBadRequest, "INVALID_JSON"}
 	}
 	return input, nil
@@ -211,6 +244,7 @@ func writeFailure(w http.ResponseWriter, err error) {
 	}
 	var storeErr *store.Error
 	if errors.As(err, &storeErr) {
+		log.Printf("Atlas Mail storage error: %s", storeErr.Code)
 		status := http.StatusInternalServerError
 		if storeErr.Code == "STORE_LOCKED" {
 			status = http.StatusConflict
@@ -218,6 +252,7 @@ func writeFailure(w http.ResponseWriter, err error) {
 		writeJSON(w, status, map[string]any{"ok": false, "code": storeErr.Code})
 		return
 	}
+	log.Print("Atlas Mail request failed: UNEXPECTED_ERROR")
 	writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "code": "UNEXPECTED_ERROR"})
 }
 

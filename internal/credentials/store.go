@@ -29,7 +29,7 @@ func (s *Store) Put(accountID, secret string) error {
 	if !model.ValidIdentifier(accountID) {
 		return errors.New("INVALID_IDENTIFIER")
 	}
-	if strings.TrimSpace(secret) == "" || len(secret) > 8192 {
+	if strings.TrimSpace(secret) == "" || len(secret) > 2048 {
 		return errors.New("INVALID_CREDENTIAL")
 	}
 	if err := s.backend.Set(serviceName, accountID, secret); err != nil {

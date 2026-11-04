@@ -26,9 +26,12 @@ func (e *Error) Unwrap() error { return e.Cause }
 
 type StateStore struct {
 	directory string
+	replace   func(string, string) error
 }
 
-func New(directory string) *StateStore { return &StateStore{directory: directory} }
+func New(directory string) *StateStore {
+	return &StateStore{directory: directory, replace: replaceFile}
+}
 
 func DataDirectory() (string, error) {
 	if override := os.Getenv("ATLAS_MAIL_DATA_DIR"); override != "" {
@@ -133,7 +136,7 @@ func (s *StateStore) Update(change func(*model.State) error) error {
 		if len(content) > maxFileBytes {
 			return &Error{Code: "DATA_TOO_LARGE"}
 		}
-		if err := atomicWrite(filename, content); err != nil {
+		if err := atomicWrite(filename, content, s.replace); err != nil {
 			return err
 		}
 		return nil
@@ -179,8 +182,11 @@ func withLock(filename string, operation func() error) error {
 		writeErr = lock.Sync()
 	}
 	if writeErr != nil {
-		_ = lock.Close()
-		_ = os.Remove(lockName)
+		closeErr := lock.Close()
+		removeErr := os.Remove(lockName)
+		if closeErr != nil || removeErr != nil {
+			return &Error{Code: "LOCK_CLEANUP_FAILED", Cause: errors.Join(writeErr, closeErr, removeErr)}
+		}
 		return &Error{Code: "STORAGE_UNAVAILABLE", Cause: writeErr}
 	}
 	operationErr := operation()
@@ -192,7 +198,7 @@ func withLock(filename string, operation func() error) error {
 	return operationErr
 }
 
-func atomicWrite(filename string, content []byte) error {
+func atomicWrite(filename string, content []byte, replace func(string, string) error) (result error) {
 	if err := os.MkdirAll(filepath.Dir(filename), 0o700); err != nil {
 		return &Error{Code: "STORAGE_UNAVAILABLE", Cause: err}
 	}
@@ -201,11 +207,18 @@ func atomicWrite(filename string, content []byte) error {
 		return &Error{Code: "WRITE_FAILED", Cause: err}
 	}
 	name := temporary.Name()
-	keep := false
+	closed := false
+	committed := false
 	defer func() {
-		_ = temporary.Close()
-		if !keep {
-			_ = os.Remove(name)
+		var closeErr, removeErr error
+		if !closed {
+			closeErr = temporary.Close()
+		}
+		if !committed {
+			removeErr = os.Remove(name)
+		}
+		if closeErr != nil || removeErr != nil {
+			result = &Error{Code: "WRITE_FAILED", Cause: errors.Join(result, closeErr, removeErr)}
 		}
 	}()
 	if err := temporary.Chmod(0o600); err != nil {
@@ -217,13 +230,15 @@ func atomicWrite(filename string, content []byte) error {
 	if err := temporary.Sync(); err != nil {
 		return &Error{Code: "WRITE_FAILED", Cause: err}
 	}
-	if err := temporary.Close(); err != nil {
+	err = temporary.Close()
+	closed = true
+	if err != nil {
 		return &Error{Code: "WRITE_FAILED", Cause: err}
 	}
-	if err := replaceFile(name, filename); err != nil {
+	if err := replace(name, filename); err != nil {
 		return &Error{Code: "WRITE_FAILED", Cause: err}
 	}
-	keep = true
+	committed = true
 	return nil
 }
 
