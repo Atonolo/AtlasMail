@@ -27,6 +27,7 @@
       ready: 'Testdaten geladen.', saved: 'Testkonto gespeichert.', disconnected: 'Verbindung getrennt.',
       saveRefreshFailed: 'Das Konto wurde gespeichert, aber die Anzeige konnte nicht aktualisiert werden.',
       error: 'Der Vorgang ist fehlgeschlagen.', AUTH_REQUIRED: 'Das Zugriffstoken ist ungültig.',
+      LOCAL_AUTH_REQUIRED: 'Die lokale Sitzung ist abgelaufen. Starten Sie die Anwendung neu und verwenden Sie deren frisch geöffnete Browserseite.',
       CONNECTION_FAILED: 'Der lokale Dienst ist nicht erreichbar.', STORE_LOCKED: 'Der Speicher wird gerade von einem anderen Prozess verwendet.',
       UNSUPPORTED_SCHEMA: 'Die Datenversion wird nicht unterstützt; vorhandene Daten wurden nicht verändert.',
       INVALID_STORED_DATA: 'Die gespeicherten Daten sind ungültig; vorhandene Daten wurden nicht verändert.',
@@ -64,6 +65,7 @@
       ready: 'Test data loaded.', saved: 'Test account saved.', disconnected: 'Disconnected.',
       saveRefreshFailed: 'The account was saved, but the display could not be refreshed.',
       error: 'The operation failed.', AUTH_REQUIRED: 'The access token is invalid.',
+      LOCAL_AUTH_REQUIRED: 'The local session has expired. Restart the application and use its newly opened browser page.',
       CONNECTION_FAILED: 'The local service is unavailable.', STORE_LOCKED: 'The store is in use by another process.',
       UNSUPPORTED_SCHEMA: 'The data version is unsupported; existing data was not changed.',
       INVALID_STORED_DATA: 'The stored data is invalid; existing data was not changed.',
@@ -78,7 +80,7 @@
     },
   };
   const $ = (id) => document.getElementById(id);
-  const desktop = Boolean(window.atlasDesktop);
+  const desktop = window.location.pathname === '/desktop';
   let language = navigator.language.toLowerCase().startsWith('de') ? 'de' : 'en';
   let token = '';
   let connected = desktop;
@@ -104,7 +106,8 @@
     $('language-en').setAttribute('aria-pressed', String(language === 'en'));
     $('environment-label').textContent = translate(desktop ? 'desktop' : 'web');
     $('status').textContent = statusKey ? translate(statusKey) : '';
-    $('error').textContent = errorCode ? `${translate(errorCode in messages[language] ? errorCode : 'error')} (${errorCode})` : '';
+    const visibleError = desktop && errorCode === 'AUTH_REQUIRED' ? 'LOCAL_AUTH_REQUIRED' : errorCode;
+    $('error').textContent = errorCode ? `${translate(visibleError in messages[language] ? visibleError : 'error')} (${errorCode})` : '';
   }
 
   function renderState() {
@@ -150,15 +153,9 @@
   }
 
   async function request(operation, input) {
-    if (desktop) {
-      try {
-        return await window.atlasDesktop[operation](input);
-      } catch {
-        return { ok: false, code: 'CONNECTION_FAILED' };
-      }
-    }
     try {
       const options = { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' };
+      if (desktop) options.headers = { 'X-Atlas-Local': '1' };
       let endpoint = '/api/v1/status';
       if (operation === 'addAccount') {
         endpoint = '/api/v1/accounts';
@@ -173,6 +170,30 @@
     } catch {
       return { ok: false, code: 'CONNECTION_FAILED' };
     }
+  }
+
+  async function connectLocalSession() {
+    let launchToken = new URLSearchParams(window.location.hash.slice(1)).get('session') || '';
+    if (launchToken) {
+      history.replaceState(null, '', window.location.pathname);
+      try {
+        const response = await fetch('/api/v1/session', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + launchToken },
+          cache: 'no-store',
+        });
+        launchToken = '';
+        if (!response.ok) {
+          setStatus('', 'AUTH_REQUIRED');
+          return;
+        }
+      } catch {
+        launchToken = '';
+        setStatus('', 'CONNECTION_FAILED');
+        return;
+      }
+    }
+    await refresh();
   }
 
   async function refresh(successKey = 'ready', version = connectionVersion) {
@@ -238,5 +259,5 @@
 
   renderLanguage();
   renderState();
-  if (desktop) refresh();
+  if (desktop) connectLocalSession();
 })();
