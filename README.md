@@ -10,10 +10,12 @@ The selected target is the already existing public repository
 `Atonolo/AtlasMail`, checked on 2026-11-03; it was selected explicitly and
 was not overwritten or recreated.
 
-Only synthetic accounts are supported in this foundation. Mail, calendar,
-contact, task, synchronization, OAuth and message rendering remain explicitly
+Personal IMAP/SMTP and JMAP accounts can be configured independently, used to
+receive and send MIME messages, and removed with their local credentials.
+Calendar, contacts, tasks, background synchronization and offline cache remain
 unavailable. The initial storage schema and adapter contracts are versioned.
 See [the architecture decision](docs/adr/0001-foundation.md),
+[the mail integration decision](docs/adr/0002-personal-mail-accounts.md),
 [the data/API contract](docs/contracts-v1.md), and
 [the verification record](docs/verification.md).
 
@@ -24,8 +26,8 @@ See [the architecture decision](docs/adr/0001-foundation.md),
   x64/arm64 (the Go standard library is cross-platform)
 - A system browser for desktop mode
 - An OS credential store for credential operations: Secret Service on Linux,
-  Keychain on macOS, or Windows Credential Manager. The P0 UI does not accept
-  real credentials.
+  Keychain on macOS, or Windows Credential Manager. Missing credential stores
+  fail closed; there is no plaintext fallback.
 
 ```sh
 go mod download all
@@ -40,13 +42,39 @@ browser. The UI immediately removes the fragment and exchanges the token for
 an HttpOnly session cookie; API calls remain authenticated after reloading.
 The token changes on every application restart. Do not copy the launch URL
 into logs or share it. Stop the foreground
-process with Ctrl+C. The application stores synthetic data in
+process with Ctrl+C. Account metadata is stored in
 `%APPDATA%\AtlasMail\state-v1.json`, `~/Library/Application Support/AtlasMail/state-v1.json`,
 or `${XDG_DATA_HOME:-~/.local/share}/AtlasMail/state-v1.json`. Set
 `ATLAS_MAIL_DATA_DIR` to an absolute path to select another directory.
+Non-secret server settings are stored beside it in `connections-v1.json`;
+passwords and OAuth tokens are held only in the native OS credential store.
 The portable executable is installed by placing it in a user-owned
 application directory; removing that executable does not remove personal
 data. Native installers and signing are not provided yet.
+
+## Personal mail accounts
+
+Use the account form to configure IMAP/SMTP endpoints (implicit TLS or
+STARTTLS) or a JMAP session URL. TLS certificate and hostname checks are
+mandatory. Passwords and app passwords are saved only in the native keyring.
+OAuth uses a provider's public-client Authorization Code + PKCE flow; supply
+its HTTPS authorization/token endpoints, client ID and scopes. Provider
+client secrets and SDKs are not used.
+
+The interface starts in dark mode. Use the theme button in the header to
+switch to light mode; that display preference is saved in this browser only.
+
+Choose an account explicitly before sending. Inbox messages are fetched only
+when requested; MIME text, HTML, and attachments are parsed, while message
+HTML is shown as text and remote images/resources are never loaded. An
+uncertain send result is reported without automatic retry; check the provider's
+Sent folder before retrying manually. Removing an account revokes its local
+credential.
+
+The self-hosted service is single-operator: account credentials are held by
+the service operator's OS keyring. Put the loopback service behind a
+self-managed HTTPS reverse proxy and configure the exact public origin for
+remote browser use. The browser never connects directly to IMAP or SMTP.
 
 On Linux, a user-local build can be installed with:
 
@@ -58,9 +86,10 @@ go build -trimpath -o "$HOME/.local/bin/atlas-mail" .
 ## Schritt fuer Schritt: Windows und macOS
 
 Diese Anleitung installiert die **portable Entwicklungsversion**, keinen
-signierten Installer. Die native Abnahme steht noch aus; die folgenden
-Schritte sind die Anleitung fuer diese manuelle Pruefung, kein Nachweis ihres
-Bestehens. Verwenden Sie ausschliesslich synthetische Testkonten.
+signierten Installer. Die native Plattformabnahme steht noch aus; die
+folgenden Schritte sind eine Anleitung fuer diese manuelle Pruefung, kein
+Nachweis ihres Bestehens. Verwenden Sie fuer die manuelle Mailpruefung
+ausschliesslich isolierte Testpostfaecher und keine produktiven Zugangsdaten.
 
 Die ZIPs unter `dist/local/` werden lokal erzeugt und sind nicht im Repository
 enthalten. Ein GitHub-Quellcode-ZIP ist kein ausfuehrbares Programmpaket.
@@ -159,10 +188,11 @@ Es werden keine GitHub-Workflows verwendet.
    synthetischen Eintrag und entfernt diesen wieder.
 
 7. Daten liegen getrennt vom Programm unter
-   `%APPDATA%\AtlasMail\state-v1.json`. Zur Sicherung alle Instanzen beenden
-   und diese Datei an einen sicheren Ort kopieren. Zur Wiederherstellung
-   bei gestoppter Anwendung die Datei an genau diesen Ort zurueckkopieren;
-   vorhandene Daten vorher separat sichern.
+   `%APPDATA%\AtlasMail\state-v1.json` und
+   `%APPDATA%\AtlasMail\connections-v1.json`. Zur Sicherung alle Instanzen
+   beenden und beide Dateien an einen sicheren Ort kopieren. Zur
+   Wiederherstellung bei gestoppter Anwendung beide Dateien an genau diesen
+   Ort zurueckkopieren; vorhandene Daten vorher separat sichern.
 
 ### macOS 14 oder neuer (Apple Silicon oder Intel)
 
@@ -257,11 +287,14 @@ Es werden keine GitHub-Workflows verwendet.
    Keine echten Mail-Zugangsdaten eingeben.
 
 7. Die Daten befinden sich unter
-   `~/Library/Application Support/AtlasMail/state-v1.json`.
+   `~/Library/Application Support/AtlasMail/state-v1.json` und daneben in
+   `connections-v1.json`.
    Im Finder kann **Gehe zu > Gehe zum Ordner** diesen Pfad oeffnen.
-   Zur Sicherung alle Instanzen stoppen und die Datei kopieren;
-   zur Wiederherstellung die gesicherte Datei bei gestoppter Anwendung
-   zuruecklegen, nachdem der bisherige Stand separat gesichert wurde.
+   Zur Sicherung alle Instanzen stoppen und beide Dateien kopieren;
+   zur Wiederherstellung beide gesicherten Dateien bei gestoppter Anwendung
+   zuruecklegen, nachdem der bisherige Stand separat gesichert wurde. Die
+   Passwoerter und OAuth-Tokens bleiben im OS-Schluesselspeicher und muessen
+   auf dem Zielsystem erneut eingerichtet werden.
 
 ### Manuelle Pruefung nach der Installation (beide Systeme)
 
@@ -273,22 +306,23 @@ enthalten. Ein bestandener Durchlauf auf einem System gilt nur fuer diese
 konkrete Kombination, nicht fuer die gesamte Plattformmatrix.
 
 1. Starten: Die lokale Oberflaeche erscheint ohne Herstellerkonto.
-   Deutsch und Englisch umschalten; noch nicht implementierte Mail-/DAV-/
-   Sync-Funktionen muessen als nicht verfuegbar erkennbar bleiben.
+   Deutsch und Englisch umschalten; Kalender, Kontakte und Offline-Abgleich
+   muessen als nicht verfuegbar erkennbar bleiben.
 2. Nur mit **Tab**, **Umschalt+Tab**, **Enter** und **Leertaste** navigieren:
    Sprunglink, Sprachwahl und Formular erreichen; sichtbaren Fokus und
    sinnvolle Reihenfolge pruefen. Mit VoiceOver auf macOS beziehungsweise
    einem Screenreader auf Windows Beschriftungen, Status und Fehlermeldungen
    pruefen. Dies dokumentiert den Basisablauf, keine vollstaendige WCAG-Abnahme.
-3. Ein Testkonto `Manuelle Abnahme` / `manual@example.invalid` speichern.
-   Erfolg und Kontenzahl pruefen; Browser neu laden und denselben Eintrag
-   erwarten. Mit Ctrl+C/Strg+C den Prozess stoppen, erneut starten und
-   gespeicherte Werte wieder pruefen.
-4. Bei geoeffneter Seite den Prozess stoppen und ein weiteres synthetisches
-   Konto absenden: Eine sichtbare Verbindungsfehlermeldung statt Erfolg muss
-   erscheinen, die Eingabe soll erhalten bleiben. Nach Neustart darf das
-   fehlgeschlagene Konto nicht gespeichert sein. Die neu geoeffnete Seite
-   benutzen, weil die alte Sitzung nach Neustart ungueltig ist.
+3. Ein isoliertes Testpostfach ueber IMAP/SMTP oder JMAP einrichten und
+   pruefen, dass Passwort oder App-Passwort nur im OS-Schluesselspeicher
+   gespeichert wird. Nachrichten nur ueber **Nachrichten laden** abrufen;
+   Inhalt, Absender und ggf. Anhaenge pruefen. HTML darf nicht ausgefuehrt und
+   externe Inhalte duerfen nicht geladen werden.
+4. Eine Testnachricht mit explizit ausgewaehltem Absenderkonto, Text und
+   optionalem Anhang senden; danach Antworten und Kontenentfernung pruefen.
+   Bei einem absichtlich unterbrochenen Versand darf kein automatischer
+   Wiederholungsversuch erfolgen. Fuer unbekannten Versandstatus zuerst den
+   Ordner „Gesendet“ pruefen.
 5. `credentials-smoke` wie oben ausfuehren und Ergebnis dokumentieren.
 6. Den Pflicht-Webdienst aus demselben Quellstand pruefen. Zuerst die lokale
    Anwendung beenden, dann im Terminal im Quellcode-Verzeichnis:
@@ -313,13 +347,13 @@ konkrete Kombination, nicht fuer die gesamte Plattformmatrix.
    teilen oder in Screenshots/Testprotokolle kopieren. Nicht in einer
    Terminal-Sitzung mit laufender Protokollaufzeichnung ausfuehren.
    `http://127.0.0.1:3123` oeffnen, den Token im Anmeldeformular eingeben,
-   ein synthetisches Konto speichern, Dienst stoppen und mit demselben
+   ein isoliertes Testpostfach konfigurieren, Dienst stoppen und mit demselben
    Startbefehl samt `server` im selben Terminal neu starten. Wieder anmelden
    und Persistenz pruefen. Ohne Token darf kein Zugriff auf Kontodaten moeglich
    sein. Die Webdienstpruefung ist fuer die volle Abnahme erforderlich,
    auch wenn sie fuer einen ersten Installationsversuch ausgelassen wird.
-7. Aktualisierung/Deinstallation: Prozess stoppen und `state-v1.json`
-   sichern. **Nur** den Programmordner
+7. Aktualisierung/Deinstallation: Prozess stoppen und `state-v1.json` sowie
+   `connections-v1.json` sichern. **Nur** den Programmordner
    `%LOCALAPPDATA%\Programs\AtlasMailPortable` beziehungsweise
    `~/Applications/AtlasMailPortable` entfernen, nicht das separate
    Datenverzeichnis. Dass die Datendatei unveraendert existiert, pruefen.
@@ -398,10 +432,11 @@ reviews remain required before full acceptance.
 ## Data safety and limitations
 
 Schema v1 rejects unknown/missing/case-aliased/duplicate fields, null values,
-unsupported versions, duplicate identifiers and invalid references. Writes validate before replacing the previous file,
-use a same-directory temporary file, and take an exclusive lock. Backups
-contain configuration only; credentials are kept separately by the native OS
-credential store and are not yet exposed in the P0 interface. See
+unsupported versions, duplicate identifiers and invalid references. Writes
+validate before replacing the previous file,
+use a same-directory temporary file, and take an exclusive lock. Backups contain account and application state only; connection profiles are
+stored in a separate file and credentials are kept separately by the native
+OS credential store. See
 [security boundaries](docs/security.md) before using a self-hosted deployment.
 If a process crashes and leaves a `state-v1.json.lock` file, stop every Atlas
 Mail process before removing that specific lock file. Never remove it while
@@ -418,7 +453,9 @@ operating systems and are not claimed based on cross-compilation.
 Voraussetzungen: Go 1.27.3 zum Bauen, ein Systembrowser und fuer native
 Zugangsdaten der Betriebssystem-Schluesselspeicher. Unter Linux muss eine
 entsperrte Secret-Service-Sitzung laufen. Die Oberflaeche bietet Deutsch und
-Englisch; echte Kontenanmeldung und Synchronisierung sind noch nicht verfuegbar.
+Englisch; Konten lassen sich per IMAP/SMTP oder JMAP einrichten. OAuth erfordert
+einen passenden oeffentlichen Anbieter-Client mit PKCE. Hintergrundabgleich
+ist noch nicht verfuegbar.
 
 Frischer Einstieg: Repository auschecken, `go mod download all`,
 `go test ./...`, `go vet ./...` und `go run .` ausfuehren. Der lokale Kern
@@ -430,11 +467,11 @@ Deinstallation: nur Programmordner loeschen; persoenliche Daten bleiben
 in den oben genannten separaten Verzeichnissen erhalten.
 
 Datensicherung und Datenuebernahme: alle Instanzen stoppen, `state-v1.json`
-kopieren und bei gestoppter Anwendung am Ziel ablegen. Schema v1 wird vor
-Verwendung vollstaendig validiert; unbekannte Versionen nicht umschreiben.
-Credentials werden dabei nicht kopiert und muessen spaeter im jeweiligen
-OS-Schluesselspeicher neu eingerichtet werden. Es gibt keine automatische
-Migration, keinen Mailimport und noch keine Familienfreigaben.
+und `connections-v1.json` kopieren und bei gestoppter Anwendung am Ziel
+ablegen. Schema v1 wird vor Verwendung vollstaendig validiert; unbekannte
+Versionen nicht umschreiben. Credentials werden nicht kopiert und muessen
+spaeter im jeweiligen OS-Schluesselspeicher neu eingerichtet werden. Es gibt
+keine automatische Migration, keinen Mailimport und noch keine Familienfreigaben.
 
 `AUTH_REQUIRED`: Server-Token erneut eingeben; im lokalen Modus die Anwendung
 neu starten und deren frisch geoeffnete Browserseite verwenden.
@@ -451,10 +488,10 @@ oder Berichte uebernehmen.
 English troubleshooting: `AUTH_REQUIRED` needs a fresh server token or local
 application restart; `CONNECTION_FAILED` means the service is unreachable.
 For `STORE_LOCKED`, stop other instances before considering stale-lock removal.
-Keep the original file on validation/schema errors. `credentials-smoke`
-checks the real OS keyring using synthetic data, not a plaintext fallback.
-Backup/restore is a stopped-process copy of `state-v1.json`; credentials are
-excluded. Family sharing and automatic migrations are not available.
+Keep the original file on validation/schema errors. `credentials-smoke` checks the real OS keyring using synthetic data, not a
+plaintext fallback. Backup/restore requires a stopped-process copy of
+`state-v1.json` and `connections-v1.json`; credentials are excluded. Family
+sharing and automatic migrations are not available.
 
 ## License
 

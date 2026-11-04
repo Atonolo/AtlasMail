@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,7 +7,7 @@
   <title>Atlas Mail</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
-  <script src="app.js" defer></script>
+  <script src="client.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="skip">Zum Inhalt springen</a>
@@ -22,7 +22,7 @@
         <a class="nav-current" href="#main" aria-current="page">
           <span class="nav-icon" aria-hidden="true">◫</span><span data-i18n="overview">Übersicht</span>
         </a>
-        <span class="nav-unavailable"><span class="nav-icon" aria-hidden="true">▤</span><span data-i18n="inbox">Posteingang</span><span class="soon" data-i18n="later">SPÄTER</span></span>
+        <a class="nav-link" href="#mail-panel"><span class="nav-icon" aria-hidden="true">▤</span><span data-i18n="inbox">Posteingang</span></a>
         <span class="nav-unavailable"><span class="nav-icon" aria-hidden="true">▦</span><span data-i18n="calendar">Kalender</span><span class="soon" data-i18n="later">SPÄTER</span></span>
         <span class="nav-unavailable"><span class="nav-icon" aria-hidden="true">☷</span><span data-i18n="tasks">Aufgaben</span><span class="soon" data-i18n="later">SPÄTER</span></span>
         <span class="nav-unavailable"><span class="nav-icon" aria-hidden="true">◎</span><span data-i18n="contacts">Kontakte</span><span class="soon" data-i18n="later">SPÄTER</span></span>
@@ -38,6 +38,7 @@
         <span class="breadcrumb"><span data-i18n="workspaceName">Arbeitsbereich</span><span aria-hidden="true"> / </span><strong data-i18n="overview">Übersicht</strong></span>
         <div class="top-actions">
           <span class="environment"><span class="environment-dot" aria-hidden="true"></span><span id="environment-label"></span></span>
+          <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Helles Design aktivieren"><span aria-hidden="true" id="theme-icon">☼</span><span id="theme-label" class="theme-label">Helles Design</span></button>
           <div class="language" role="group" aria-label="Sprache / Language">
             <button type="button" id="language-de" aria-pressed="true">DE</button>
             <button type="button" id="language-en" aria-pressed="false">EN</button>
@@ -49,16 +50,16 @@
         <section class="intro" aria-labelledby="page-title">
           <div>
             <p class="eyebrow"><span aria-hidden="true">✦</span> <span data-i18n="foundation">DAS FUNDAMENT</span></p>
-            <h1 id="page-title" data-i18n="headline">Willkommen bei Atlas Mail.</h1>
-            <p class="lead" data-i18n="intro">Ein privater Ort für Ihre Kommunikation – von Grund auf offen und lokal gedacht.</p>
+            <h1 id="page-title" data-i18n="headline">Ihre E-Mail. Ihre Konten. Ihr Zuhause.</h1>
+            <p class="lead" data-i18n="intro">Ein privater Ort für Ihre Kommunikation – offen und lokal gedacht.</p>
           </div>
-          <span class="version-pill">P0 · V1</span>
+          <span class="version-pill">V1</span>
         </section>
 
         <section class="notice" aria-labelledby="notice-title">
           <span class="notice-symbol" aria-hidden="true">i</span>
-          <div><h2 id="notice-title" data-i18n="noticeTitle">Das Grundgerüst ist noch kein Mailprogramm</h2>
-            <p data-i18n="noticeText">Hier können Sie ausschließlich synthetische Testkonten speichern. E-Mail, Synchronisierung und Kalender sind noch nicht verfügbar. Bitte keine echten Zugangsdaten eingeben.</p></div>
+          <div><h2 id="notice-title" data-i18n="noticeTitle">Verbindung zu Ihren Mailkonten</h2>
+            <p data-i18n="noticeText">Konten verbinden sich direkt über den geschützten Dienst mit IMAP/SMTP oder JMAP. Nachrichten werden nur auf ausdrückliche Aktion geladen; externe Inhalte werden nicht nachgeladen.</p></div>
         </section>
 
         <section id="login-section" class="panel login-panel" hidden aria-labelledby="login-title">
@@ -80,28 +81,81 @@
             <section class="panel account-panel" aria-labelledby="accounts-title">
               <div class="panel-heading">
                 <div><p class="section-kicker" data-i18n="configuration">KONFIGURATION</p>
-                  <h2 id="accounts-title" data-i18n="accountsTitle">Synthetische Konten</h2>
-                  <p data-i18n="accountsText">Testdaten werden auf diesem Gerät im Anwendungsspeicher abgelegt.</p></div>
+                  <h2 id="accounts-title" data-i18n="accountsTitle">Persönliche Konten</h2>
+                  <p data-i18n="accountsText">Verbindungsdaten liegen lokal; Zugangsdaten werden ausschließlich im OS-Schlüsselspeicher verwahrt.</p></div>
                 <span class="count-pill" id="account-count">0</span>
               </div>
               <div id="account-empty" class="empty-state">
                 <span class="empty-icon" aria-hidden="true">✉</span>
-                <h3 data-i18n="emptyTitle">Noch keine Testkonten</h3>
-                <p data-i18n="emptyText">Legen Sie unten ein synthetisches Konto an, um das Speichern und erneute Laden auszuprobieren.</p>
+                <h3 data-i18n="emptyTitle">Noch keine Konten</h3>
+                <p data-i18n="emptyText">Fügen Sie ein persönliches IMAP/SMTP- oder JMAP-Konto hinzu.</p>
               </div>
               <ul id="account-list" class="account-list" aria-label="Konten / Accounts"></ul>
               <div class="form-divider"></div>
-              <h3 class="form-heading" data-i18n="addTitle">Testkonto hinzufügen</h3>
+              <h3 class="form-heading" data-i18n="addTitle">E-Mail-Konto verbinden</h3>
               <form id="account-form">
                 <div class="fields">
-                  <label><span data-i18n="accountName">Anzeigename</span><input id="account-name" name="label" required maxlength="80" autocomplete="off" placeholder="Beispielkonto" data-i18n-placeholder="namePlaceholder"></label>
-                  <label><span data-i18n="accountAddress">Testadresse</span><input id="account-address" name="address" type="email" required maxlength="254" autocomplete="off" placeholder="beispiel@example.invalid" data-i18n-placeholder="addressPlaceholder"></label>
+                  <label><span data-i18n="accountName">Anzeigename</span><input id="account-name" name="label" required maxlength="80" autocomplete="off" placeholder="Privat" data-i18n-placeholder="namePlaceholder"></label>
+                  <label><span data-i18n="accountAddress">E-Mail-Adresse</span><input id="account-address" name="address" type="email" required maxlength="254" autocomplete="email" placeholder="name@example.org" data-i18n-placeholder="addressPlaceholder"></label>
                   <label><span data-i18n="protocol">Protokoll</span><select id="account-protocol" name="protocol"><option value="imap-smtp">IMAP / SMTP</option><option value="jmap">JMAP</option></select></label>
+                  <label><span data-i18n="username">Benutzername</span><input id="account-username" name="username" maxlength="254" autocomplete="username" placeholder="name@example.org"></label>
+                  <label><span data-i18n="authentication">Anmeldung</span><select id="auth-mechanism"><option value="password" data-i18n="passwordAuth">Passwort / App-Passwort</option><option value="oauth2">OAuth 2.0 (PKCE)</option></select></label>
+                  <label id="secret-field"><span id="secret-label" data-i18n="password">Passwort</span><input id="account-secret" name="secret" type="password" maxlength="2048" autocomplete="new-password"></label>
+                </div>
+                <div id="imap-fields" class="server-fields">
+                  <h4 data-i18n="imapServer">IMAP-Server</h4>
+                  <div class="fields">
+                    <label><span data-i18n="server">Server</span><input id="imap-host" required maxlength="253" autocomplete="url" placeholder="imap.example.org"></label>
+                    <label><span data-i18n="port">Port</span><input id="imap-port" required type="number" min="1" max="65535" value="993"></label>
+                    <label><span data-i18n="tls">Verschlüsselung</span><select id="imap-tls"><option value="implicit">TLS (direkt)</option><option value="starttls">STARTTLS</option></select></label>
+                  </div>
+                  <h4 data-i18n="smtpServer">SMTP-Server</h4>
+                  <div class="fields">
+                    <label><span data-i18n="server">Server</span><input id="smtp-host" required maxlength="253" autocomplete="url" placeholder="smtp.example.org"></label>
+                    <label><span data-i18n="port">Port</span><input id="smtp-port" required type="number" min="1" max="65535" value="465"></label>
+                    <label><span data-i18n="tls">Verschlüsselung</span><select id="smtp-tls"><option value="implicit">TLS (direkt)</option><option value="starttls">STARTTLS</option></select></label>
+                  </div>
+                </div>
+                <div id="jmap-fields" class="server-fields" hidden>
+                  <label><span data-i18n="jmapUrl">JMAP-Sitzungs-URL</span><input id="jmap-url" type="url" maxlength="2048" placeholder="https://mail.example.org/.well-known/jmap"></label>
+                </div>
+                <div id="oauth-fields" class="server-fields" hidden>
+                  <p data-i18n="oauthDescription">Verwenden Sie OAuth-Endpunkte Ihres Anbieters. Die Anmeldung erfolgt mit Authorization Code und PKCE.</p>
+                  <div class="fields">
+                    <label><span data-i18n="authorizationUrl">Autorisierungs-URL</span><input id="oauth-authorization-url" type="url" maxlength="2048" placeholder="https://provider.example/oauth/authorize"></label>
+                    <label><span data-i18n="tokenUrl">Token-URL</span><input id="oauth-token-url" type="url" maxlength="2048" placeholder="https://provider.example/oauth/token"></label>
+                    <label><span data-i18n="clientId">Öffentliche Client-ID</span><input id="oauth-client-id" maxlength="512" autocomplete="off"></label>
+                    <label><span data-i18n="oauthScope">Scopes</span><input id="oauth-scope" maxlength="2048" autocomplete="off"></label>
+                  </div>
                 </div>
                 <div class="form-bottom">
-                  <p data-i18n="noCredentials">Es werden keine Zugangsdaten abgefragt.</p>
-                  <button type="submit" class="button button-primary" id="save-account" data-i18n="saveAccount">Testkonto speichern</button>
+                  <p data-i18n="credentialNote">Zugangsdaten werden nicht exportiert oder protokolliert.</p>
+                  <button type="submit" class="button button-primary" id="save-account" data-i18n="saveAccount">Konto sicher verbinden</button>
                 </div>
+              </form>
+            </section>
+            <section id="mail-panel" class="panel mail-panel" hidden aria-labelledby="mail-title">
+              <div class="panel-heading">
+                <div><p class="section-kicker" data-i18n="mailbox">POSTEINGANG</p><h2 id="mail-title" data-i18n="mailTitle">Nachrichten</h2></div>
+                <button type="button" class="button button-secondary" id="refresh-mail" data-i18n="refreshMail">Nachrichten laden</button>
+              </div>
+              <p id="mail-empty" class="empty-state" data-i18n="mailEmpty">Wählen Sie ein Konto und laden Sie Nachrichten.</p>
+              <ul id="message-list" class="message-list"></ul>
+            </section>
+            <section id="compose-panel" class="panel" hidden aria-labelledby="compose-title">
+              <h2 id="compose-title" data-i18n="composeTitle">Nachricht verfassen</h2>
+              <form id="compose-form">
+                <div class="fields">
+                  <label><span data-i18n="sendFrom">Senden über dieses Konto</span><select id="compose-account" required></select></label>
+                  <label><span data-i18n="recipient">Empfänger</span><input id="compose-to" type="email" required multiple autocomplete="email"></label>
+                  <label><span data-i18n="subject">Betreff</span><input id="compose-subject" maxlength="998" autocomplete="off"></label>
+                </div>
+                <label class="message-label"><span data-i18n="messageBody">Nachricht</span><textarea id="compose-body" rows="8" maxlength="2000000"></textarea></label>
+                <label class="message-label"><span data-i18n="htmlOptional">HTML-Version (optional)</span><textarea id="compose-html" rows="5" maxlength="2000000"></textarea></label>
+                <label class="message-label"><span data-i18n="attachments">Anhänge</span><input id="compose-attachments" type="file" multiple></label>
+                <p id="sender-confirmation" class="sender-confirmation" aria-live="polite"></p>
+                <input id="reply-in-reply-to" type="hidden"><input id="reply-references" type="hidden">
+                <button type="submit" class="button button-primary" id="send-message" data-i18n="send">Senden</button>
               </form>
             </section>
           </div>
@@ -109,9 +163,8 @@
             <section class="panel roadmap" aria-labelledby="roadmap-title">
               <p class="section-kicker" data-i18n="availability">VERFÜGBARKEIT</p>
               <h2 id="roadmap-title" data-i18n="roadmapTitle">Was als Nächstes kommt</h2>
-              <p class="roadmap-intro" data-i18n="roadmapText">Diese Funktionen gehören zu späteren Ausbaustufen und sind noch nicht aktiv.</p>
+              <p class="roadmap-intro" data-i18n="roadmapText">Kalender, Kontakte und Offline-Abgleich gehören zu späteren Ausbaustufen.</p>
               <ul>
-                <li><span class="roadmap-icon" aria-hidden="true">✉</span><span><strong data-i18n="roadmapMail">E-Mail &amp; Konten</strong><small data-i18n="roadmapMailDetail">IMAP, SMTP und JMAP</small></span><span class="unavailable" data-i18n="unavailable">Nicht verfügbar</span></li>
                 <li><span class="roadmap-icon" aria-hidden="true">▦</span><span><strong data-i18n="roadmapCalendar">Kalender &amp; Kontakte</strong><small data-i18n="roadmapCalendarDetail">CalDAV und CardDAV</small></span><span class="unavailable" data-i18n="unavailable">Nicht verfügbar</span></li>
                 <li><span class="roadmap-icon" aria-hidden="true">↻</span><span><strong data-i18n="roadmapSync">Offline &amp; Abgleich</strong><small data-i18n="roadmapSyncDetail">Cache und Warteschlange</small></span><span class="unavailable" data-i18n="unavailable">Nicht verfügbar</span></li>
               </ul>

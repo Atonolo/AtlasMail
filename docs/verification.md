@@ -43,6 +43,13 @@ the account identity and attributes survive. The HTTP tests check bearer
 authentication, per-process local cookie bootstrap/reload, mandatory custom
 local header, Host port, Origin rejection and visible failures.
 
+Mail coverage uses local test servers and synthetic credentials only. It
+checks IMAP/SMTP TLS and certificate rejection, MIME parsing/construction and
+attachments, JMAP receive/send and uncertain submission, OAuth PKCE state,
+credential separation/removal, account API behavior and visible protocol
+errors. It does not prove interoperability with any real mail provider or
+provider-specific OAuth settings.
+
 ## Scoped Linux manual evidence, 2026-11-04
 
 Host: Linux amd64 development container; Go 1.27.3. These are diagnostic
@@ -50,11 +57,11 @@ checks, not a clean Ubuntu desktop or a complete dependency/license approval.
 
 | Check | Artifact/tool | Result |
 |---|---|---|
-| Real browser form submission | HeadlessChrome 156.0.0.0, shared embedded UI | Enter submits one synthetic account; count/address visible |
+| Real browser form submission | HeadlessChrome 156.0.0.0, shared embedded UI | Enter submits one metadata-only synthetic account; count/address visible |
 | Actual service stop and failed submit | Server binary SHA-256 `d82e73b53af9a0f5ef9e9d85b7298644a9aa608f0e5a5a3f60b28f50794d79f8` | Visible `CONNECTION_FAILED`; no success status; unsaved form retained |
 | Actual service restart | Same binary and data directory | Saved account count remains 1 with same address; failed offline submission absent |
 | Keyboard/localization diagnostic | Same browser | Space activates German; Tab advances to English with solid 3px focus outline |
-| Browser storage/network diagnostic | Same browser | Token field cleared; localStorage empty; observed resource origins loopback-only |
+| Browser storage/network diagnostic | Same browser | Token field cleared; no tokens in localStorage (theme preference only); observed resource origins loopback-only |
 | Portable desktop authentication | Linux ZIP executable SHA-256 `4f080a0da2a2f370eccb0fc3ac040e16627a431fabb8a70ea707ed0d7ebdd2d3` | Captured native-launcher URL opened in real browser; fragment removed, HttpOnly cookie hidden from JavaScript; saved account survives reload including `#main`; cookie-only call without local header returns 401 |
 | Portable removal/reinstallation | Linux ZIP executable SHA-256 `8b8a134ab6a925bd4acd7b4e6d86717be3c774a3bb55db6303005e9b9c3c729e` | Removed only extracted program directory, re-extracted ZIP, started server mode; retained desktop account returned by authenticated API |
 | Final portable native keyring smoke | Same `8b8a134a...` executable | Fresh unprivileged profile/D-Bus session; real native write/read/delete passed |
@@ -82,8 +89,11 @@ the isolated test service. No real credentials were used.
 - Artifact-complete legal review of external browser/runtime, system/native
   credential services, host compiler and test tooling. Top-level module and
   toolchain license fingerprints alone do not prove every bundled file.
-- Suite-wide ownership/version compatibility and the user-facing credential
-  flow before the corresponding account feature.
+- Provider-specific OAuth registration, live token exchange/refresh, and
+  interoperability with real IMAP/SMTP/JMAP providers using isolated test
+  accounts; generic OAuth and local protocol fakes do not establish this.
+- Browser UI account setup, mailbox navigation, HTML-only composition, OAuth
+  popup, and attachment flows on the target browser/OS matrix.
 
 The Go graph uses reviewed OSI licenses and does not bundle Electron, Node,
 SQLite or a browser. This removes those bundled-runtime blockers but does

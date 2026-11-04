@@ -1,6 +1,8 @@
 package web
 
 import (
+	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -14,15 +16,18 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Atonolo/AtlasMail/internal/mail"
 	"github.com/Atonolo/AtlasMail/internal/model"
 	"github.com/Atonolo/AtlasMail/internal/service"
 	"github.com/Atonolo/AtlasMail/internal/store"
 )
 
 const (
-	maxRequestBytes = 16 * 1024
-	contentSecurity = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+	maxRequestBytes     = 16 * 1024
+	maxMailRequestBytes = 16 * 1024 * 1024
+	contentSecurity     = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 )
 
 type Config struct {
@@ -91,6 +96,10 @@ func handle(w http.ResponseWriter, r *http.Request, config Config) {
 			writeResponse(w, http.StatusOK, contentType, content)
 			return
 		}
+		if r.URL.Path == "/oauth/callback" {
+			handleOAuthCallback(w, r, config, origin)
+			return
+		}
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/v1/") {
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "code": "NOT_FOUND"})
@@ -144,6 +153,61 @@ func handle(w http.ResponseWriter, r *http.Request, config Config) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": account})
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/accounts/setup":
+		var input accountSetupRequest
+		if err := decodeRequest(w, r, maxRequestBytes, &input); err != nil {
+			writeRequestFailure(w, err)
+			return
+		}
+		account, err := config.Service.ConfigureAccount(input.Account, input.Profile, input.Secret)
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": account})
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/accounts/"):
+		accountID := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/")
+		if strings.Contains(accountID, "/") {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "code": "NOT_FOUND"})
+			return
+		}
+		if err := config.Service.RemoveAccount(accountID); err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": nil})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/mail":
+		accountID := r.URL.Query().Get("accountId")
+		ctx, cancel := contextWithRequestTimeout(r)
+		defer cancel()
+		messages, err := config.Service.Receive(ctx, accountID)
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": messages})
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/mail/send":
+		var input mail.SendInput
+		if err := decodeRequest(w, r, maxMailRequestBytes, &input); err != nil {
+			writeRequestFailure(w, err)
+			return
+		}
+		ctx, cancel := contextWithRequestTimeout(r)
+		defer cancel()
+		if err := config.Service.Send(ctx, input); err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": nil})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/oauth/start":
+		authorizationURL, err := config.Service.BeginOAuth(r.URL.Query().Get("accountId"), origin+"/oauth/callback")
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "data": map[string]string{"authorizationUrl": authorizationURL},
+		})
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "code": "NOT_FOUND"})
 	}
@@ -187,15 +251,36 @@ func staticAsset(path string, desktop bool) (string, string, bool) {
 	switch path {
 	case "/", "/index.html":
 		return "index.html", "text/html; charset=utf-8", true
-	case "/app.js":
-		return "app.js", "text/javascript; charset=utf-8", true
+	case "/client.js":
+		return "client.js", "text/javascript; charset=utf-8", true
 	case "/styles.css":
 		return "styles.css", "text/css; charset=utf-8", true
 	case "/favicon.svg":
 		return "favicon.svg", "image/svg+xml", true
+	case "/oauth-callback.js":
+		return "oauth-callback.js", "text/javascript; charset=utf-8", true
 	default:
 		return "", "", false
 	}
+}
+
+func handleOAuthCallback(w http.ResponseWriter, r *http.Request, config Config, origin string) {
+	status := http.StatusOK
+	success := false
+	if r.URL.Query().Get("error") != "" || r.URL.Query().Get("code") == "" {
+		status = http.StatusBadRequest
+	} else if err := config.Service.CompleteOAuth(r.Context(), r.URL.Query().Get("state"),
+		r.URL.Query().Get("code"), origin+"/oauth/callback"); err != nil {
+		status = http.StatusBadRequest
+	} else {
+		success = true
+	}
+	message := "Authorization failed. Return to Atlas Mail and try again."
+	if success {
+		message = "Authorization completed. Return to Atlas Mail."
+	}
+	content := []byte("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>Atlas Mail authorization</title><body data-oauth-success=\"" + strconv.FormatBool(success) + "\"><main><h1>Atlas Mail</h1><p>" + message + "</p></main><script src=\"/oauth-callback.js\" defer></script></body></html>")
+	writeResponse(w, status, "text/html; charset=utf-8", content)
 }
 
 func authenticate(header, token string) bool {
@@ -214,6 +299,53 @@ type requestError struct {
 }
 
 func (e *requestError) Error() string { return e.code }
+
+type accountSetupRequest struct {
+	Account model.AccountInput `json:"account"`
+	Profile mail.Profile       `json:"profile"`
+	Secret  string             `json:"secret"`
+}
+
+func decodeRequest(w http.ResponseWriter, r *http.Request, maxBytes int64, target any) error {
+	mediaType, parameters, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(mediaType, "application/json") ||
+		(len(parameters) > 0 && (len(parameters) != 1 || !strings.EqualFold(parameters["charset"], "utf-8"))) {
+		return &requestError{http.StatusBadRequest, "INVALID_CONTENT_TYPE"}
+	}
+	content, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return &requestError{http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE"}
+		}
+		return &requestError{http.StatusBadRequest, "INVALID_JSON"}
+	}
+	if err := model.ValidateJSON(content); err != nil {
+		return &requestError{http.StatusBadRequest, "INVALID_JSON"}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return &requestError{http.StatusBadRequest, "INVALID_JSON"}
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return &requestError{http.StatusBadRequest, "INVALID_JSON"}
+	}
+	return nil
+}
+
+func writeRequestFailure(w http.ResponseWriter, err error) {
+	var requestErr *requestError
+	if errors.As(err, &requestErr) {
+		writeJSON(w, requestErr.status, map[string]any{"ok": false, "code": requestErr.code})
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "code": "INVALID_JSON"})
+}
+
+func contextWithRequestTimeout(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(r.Context(), 45*time.Second)
+}
 
 func readAccount(r *http.Request) (model.AccountInput, error) {
 	mediaType, parameters, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -240,6 +372,27 @@ func writeFailure(w http.ResponseWriter, err error) {
 	var modelErr *model.Error
 	if errors.As(err, &modelErr) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "code": modelErr.Code})
+		return
+	}
+	var mailErr *mail.Error
+	if errors.As(err, &mailErr) {
+		status := http.StatusBadRequest
+		switch mailErr.Code {
+		case "AUTH_FAILED", "AUTH_REQUIRED", "CREDENTIAL_READ_FAILED":
+			status = http.StatusUnauthorized
+		case "TLS_CERTIFICATE_INVALID", "TLS_REQUIRED":
+			status = http.StatusBadGateway
+		case "CONNECTION_FAILED", "IMAP_CONNECTION_FAILED", "SMTP_CONNECTION_FAILED",
+			"JMAP_CONNECTION_FAILED", "MAIL_RECEIVE_FAILED", "SMTP_SEND_FAILED":
+			status = http.StatusBadGateway
+		case "SEND_STATUS_UNCERTAIN":
+			status = http.StatusConflict
+		case "CREDENTIAL_STORE_UNAVAILABLE", "CREDENTIAL_REVOKE_FAILED":
+			status = http.StatusServiceUnavailable
+		case "ACCOUNT_NOT_FOUND":
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, map[string]any{"ok": false, "code": mailErr.Code})
 		return
 	}
 	var storeErr *store.Error
